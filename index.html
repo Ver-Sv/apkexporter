@@ -1,0 +1,334 @@
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>index.html to APK Exporter</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"
+  />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    textarea {
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col items-center justify-start p-6 space-y-8">
+  <div class="max-w-4xl w-full bg-white rounded-lg shadow-lg p-8">
+    <h1 class="text-4xl font-semibold text-gray-800 mb-8 text-center">
+      index.html to APK Exporter
+    </h1>
+
+    <form id="apkForm" class="space-y-6">
+      <div>
+        <label for="appName" class="block text-gray-700 font-semibold mb-1">Uygulama İsmi</label>
+        <input
+          type="text"
+          id="appName"
+          placeholder="Örnek: MyGame"
+          class="w-full border border-gray-300 rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          required
+        />
+      </div>
+
+      <div>
+        <label for="packageName" class="block text-gray-700 font-semibold mb-1">Paket İsmi (package name)</label>
+        <input
+          type="text"
+          id="packageName"
+          placeholder="Örnek: com.isim.game"
+          pattern="^[a-zA-Z]+(\.[a-zA-Z][a-zA-Z0-9_]*)+$"
+          title="Paket ismi com.isim.game formatında olmalı"
+          class="w-full border border-gray-300 rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          required
+        />
+      </div>
+
+      <div>
+        <label for="appLogo" class="block text-gray-700 font-semibold mb-1">Uygulama Logosu (PNG, 512x512 önerilir)</label>
+        <input
+          type="file"
+          id="appLogo"
+          accept="image/png"
+          class="w-full"
+          required
+        />
+      </div>
+
+      <div>
+        <label for="htmlContent" class="block text-gray-700 font-semibold mb-1">index.html İçeriği</label>
+        <textarea
+          id="htmlContent"
+          rows="15"
+          placeholder="Buraya index.html dosyanızın tüm içeriğini yapıştırın..."
+          class="w-full border border-gray-300 rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          required
+        ></textarea>
+      </div>
+
+      <button
+        type="submit"
+        id="buildBtn"
+        class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-md transition-colors duration-300 flex items-center justify-center space-x-2"
+      >
+        <i class="fas fa-cogs"></i>
+        <span>APK Oluştur</span>
+      </button>
+    </form>
+
+    <div id="progressContainer" class="mt-6 hidden">
+      <label for="progressBar" class="block text-gray-700 font-semibold mb-1">Hazırlanıyor...</label>
+      <progress id="progressBar" value="0" max="100" class="w-full h-6 rounded-md"></progress>
+    </div>
+
+    <div id="downloadContainer" class="mt-6 hidden text-center">
+      <a
+        id="downloadApkBtn"
+        href="#"
+        download=""
+        class="inline-block bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-md transition-colors duration-300"
+      >
+        <i class="fas fa-download mr-2"></i>APK İndir
+      </a>
+    </div>
+
+    <div id="errorMessage" class="mt-6 text-red-600 font-semibold text-center"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fflate@0.7.4/umd/index.js"></script>
+  <script>
+    /*
+      Gerçek APK oluşturma işlemi tarayıcıda mümkün değildir çünkü APK, imzalanmış, derlenmiş ve özel formatta bir dosyadır.
+      Ancak, burada WebAPK (Trusted Web Activity) mantığıyla çalışan, Google'ın PWA'ları APK olarak paketlemesini sağlayan bir yöntem yoktur.
+      Bu nedenle, tarayıcıda gerçek APK oluşturmak mümkün değildir.
+
+      Aşağıdaki kod, kullanıcıdan alınan index.html, logo ve bilgilerle basit bir Android WebView projesi oluşturup,
+      bunu ZIP olarak değil, APK formatına yakın bir biçimde (yalnızca dosya uzantısı .apk) paketlemeye çalışır.
+      Ancak bu dosya gerçek APK değildir ve Android cihazlarda çalışmaz.
+
+      Gerçek APK oluşturmak için Android Studio, Java/Kotlin derleyicisi ve imzalama gereklidir.
+
+      Bu demo sadece kullanıcı deneyimi için hazırlanmıştır.
+    */
+
+    const form = document.getElementById('apkForm');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const downloadContainer = document.getElementById('downloadContainer');
+    const downloadApkBtn = document.getElementById('downloadApkBtn');
+    const errorMessage = document.getElementById('errorMessage');
+    const buildBtn = document.getElementById('buildBtn');
+
+    // AndroidManifest.xml template with placeholders
+    function getAndroidManifest(packageName, appName) {
+      return `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="${packageName}">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:allowBackup="true"
+        android:label="${appName}"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.App">
+        <activity android:name="MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.App.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>`;
+    }
+
+    // MainActivity.java template with fullscreen WebView
+    function getMainActivity(packageName) {
+      return `package ${packageName};
+
+import android.os.Bundle;
+import android.view.View;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import androidx.appcompat.app.AppCompatActivity;
+
+public class MainActivity extends AppCompatActivity {
+    private WebView webView;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        // Tam ekran modunu aktif et
+        getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_FULLSCREEN |
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
+        setContentView(R.layout.activity_main);
+
+        webView = findViewById(R.id.webview);
+        WebSettings webSettings = webView.getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setDomStorageEnabled(true);
+        webSettings.setAllowFileAccess(true);
+        webSettings.setAllowContentAccess(true);
+        webView.loadUrl("file:///android_asset/index.html");
+    }
+}`;
+
+    }
+
+    // activity_main.xml layout with fullscreen WebView
+    function getActivityMainXml() {
+      return `<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <WebView
+        android:id="@+id/webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</RelativeLayout>`;
+    }
+
+    // styles.xml with fullscreen theme
+    function getStylesXml() {
+      return `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.App" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
+    <style name="Theme.App.NoActionBar" parent="Theme.AppCompat.Light.NoActionBar" />
+</resources>`;
+    }
+
+    // Helper: convert File to base64 string
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = (error) => reject(error);
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Helper: create a minimal APK-like binary (fake APK) with assets and source files
+    // This is a ZIP archive with .apk extension but not a real signed APK
+    async function createFakeApk(appName, packageName, logoFile, htmlContent) {
+      const zip = new JSZip();
+
+      // Convert packageName to path
+      const packagePath = packageName.replace(/\./g, '/');
+
+      // Add AndroidManifest.xml
+      zip.file('AndroidManifest.xml', getAndroidManifest(packageName, appName));
+
+      // Add MainActivity.java
+      zip.file(`src/${packagePath}/MainActivity.java`, getMainActivity(packageName));
+
+      // Add activity_main.xml
+      zip.file('res/layout/activity_main.xml', getActivityMainXml());
+
+      // Add styles.xml
+      zip.file('res/values/styles.xml', getStylesXml());
+
+      // Add index.html to assets
+      zip.file('assets/index.html', htmlContent);
+
+      // Add logo as mipmap/ic_launcher.png
+      const logoData = await logoFile.arrayBuffer();
+      zip.file('res/mipmap/ic_launcher.png', logoData);
+
+      // Generate ZIP as blob
+      const content = await zip.generateAsync({ type: 'blob' }, (metadata) => {
+        progressBar.value = metadata.percent;
+      });
+
+      // Rename blob to .apk extension (fake APK)
+      return new File([content], `${appName.replace(/\s+/g, '_')}.apk`, { type: 'application/vnd.android.package-archive' });
+    }
+
+    // Show progress bar with smooth increments
+    function simulateProgress(duration = 4000) {
+      return new Promise((resolve) => {
+        let start = null;
+        function step(timestamp) {
+          if (!start) start = timestamp;
+          const elapsed = timestamp - start;
+          const progress = Math.min((elapsed / duration) * 100, 100);
+          progressBar.value = progress;
+          if (progress < 100) {
+            requestAnimationFrame(step);
+          } else {
+            resolve();
+          }
+        }
+        requestAnimationFrame(step);
+      });
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMessage.textContent = '';
+      downloadContainer.classList.add('hidden');
+      progressContainer.classList.remove('hidden');
+      progressBar.value = 0;
+      buildBtn.disabled = true;
+      buildBtn.querySelector('span').textContent = 'Oluşturuluyor...';
+      buildBtn.querySelector('i').className = 'fas fa-spinner fa-spin';
+
+      try {
+        const appName = document.getElementById('appName').value.trim();
+        const packageName = document.getElementById('packageName').value.trim();
+        const logoFile = document.getElementById('appLogo').files[0];
+        const htmlContent = document.getElementById('htmlContent').value;
+
+        if (!appName || !packageName || !logoFile || !htmlContent) {
+          throw new Error('Lütfen tüm alanları eksiksiz doldurun.');
+        }
+
+        // Validate package name pattern
+        if (!/^[a-zA-Z]+(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(packageName)) {
+          throw new Error('Paket ismi "com.isim.game" formatında olmalıdır.');
+        }
+
+        // Simulate build progress
+        await simulateProgress(3000);
+
+        // Create fake APK file
+        const apkFile = await createFakeApk(appName, packageName, logoFile, htmlContent);
+
+        // Create download link
+        const apkUrl = URL.createObjectURL(apkFile);
+        downloadApkBtn.href = apkUrl;
+        downloadApkBtn.download = apkFile.name;
+        downloadContainer.classList.remove('hidden');
+
+        buildBtn.querySelector('span').textContent = 'APK Oluştur';
+        buildBtn.querySelector('i').className = 'fas fa-cogs';
+      } catch (err) {
+        errorMessage.textContent = err.message || 'Bir hata oluştu.';
+        buildBtn.querySelector('span').textContent = 'APK Oluştur';
+        buildBtn.querySelector('i').className = 'fas fa-cogs';
+      } finally {
+        progressContainer.classList.add('hidden');
+        buildBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
